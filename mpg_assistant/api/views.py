@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from ai.prompts import build_system_prompt
-from ai.services import call_llm, is_prompt_injection, retrieve
+from ai.services import call_llm, is_out_of_scope, is_prompt_injection, retrieve
 from chat.models import Conversation, Message, QuestionSansReponse
 
 from .serializers import ChatRequestSerializer, ChatResponseSerializer
@@ -123,6 +123,25 @@ class ChatView(APIView):
             output = ChatResponseSerializer({
                 'session_id': conversation.session_id,
                 'reponse': reponse_injection,
+                'sources': [],
+                'trouve_quelque_chose': False,
+            })
+            return Response(output.data)
+
+        if is_out_of_scope(message_utilisateur):
+            reponse_hors_perimetre = (
+                'هذا السؤال خارج نطاق معلومات مدرسة EETFP-MPG. يمكنني مساعدتك في '
+                'التخصصات والقبول والتسجيل وبرامج التكوين.'
+                if langue == 'ar' else
+                "Cette question sort du périmètre de l'EETFP-MPG. Je peux vous aider "
+                "sur les spécialités, l'admission, l'inscription et les formations."
+            )
+            Message.objects.create(
+                conversation=conversation, role='assistant', contenu=reponse_hors_perimetre,
+            )
+            output = ChatResponseSerializer({
+                'session_id': conversation.session_id,
+                'reponse': reponse_hors_perimetre,
                 'sources': [],
                 'trouve_quelque_chose': False,
             })

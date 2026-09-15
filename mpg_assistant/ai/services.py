@@ -34,6 +34,7 @@ PROMPT_INJECTION_TERMS = {
     'reveal the system prompt', 'prompt système', 'instructions précédentes',
     'تجاهل التعليمات', 'التعليمات السابقة', 'النص الداخلي للنظام', 'كلمة المرور',
 }
+OUT_OF_SCOPE_TERMS = {'bitcoin', 'crypto', 'cryptomonnaie', 'cryptocurrency', 'بيتكوين', 'عملات مشفرة'}
 
 
 # Dictionnaire d'expansion sémantique et de synonymes (Français & Arabe)
@@ -91,6 +92,11 @@ def _expand_tokens(tokens: set[str]) -> set[str]:
 def is_prompt_injection(text: str) -> bool:
     normalized = ' '.join((text or '').lower().split())
     return any(term in normalized for term in PROMPT_INJECTION_TERMS)
+
+
+def is_out_of_scope(text: str) -> bool:
+    normalized = ' '.join((text or '').lower().split())
+    return any(term in normalized for term in OUT_OF_SCOPE_TERMS)
 
 
 @dataclass
