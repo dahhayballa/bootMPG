@@ -68,14 +68,14 @@ def _tokenize(text: str) -> set[str]:
     tokens = set()
     for word in _WORD_RE.findall(text or ""):
         token = word.lower()
-        if len(token) <= 2 or token in _STOP_WORDS:
+        if (len(token) <= 2 and token not in {'rp', 'si', 'em'}) or token in _STOP_WORDS:
             continue
         # توحيد اللواصق العربية الشائعة: "التخصصات" و"والمستندات"
         # يجب أن تتطابق مع "تخصصات" و"مستندات" في قاعدة المعرفة.
         if re.match(r'[\u0600-\u06FF]', token):
             token = token.removeprefix('و')
             token = token.removeprefix('ال')
-        if len(token) > 2:
+        if len(token) > 2 or token in {'rp', 'si', 'em'}:
             if token not in _STOP_WORDS:
                 tokens.add(token)
     return tokens
@@ -87,6 +87,10 @@ def _expand_tokens(tokens: set[str]) -> set[str]:
         if token in _EXPANDED_SYNONYMS:
             expanded.update(_EXPANDED_SYNONYMS[token])
     return expanded
+
+
+def _normalize_question(text: str) -> str:
+    return ' '.join(_WORD_RE.findall((text or '').casefold()))
 
 
 def is_prompt_injection(text: str) -> bool:
@@ -155,37 +159,45 @@ def retrieve(question: str, langue: str | None = None, top_k: int | None = None)
         faq_qs = faq_qs.filter(langue=langue)
 
     scored_faqs = []
+    normalized_question = _normalize_question(question)
     for faq in faq_qs:
         # Le libellé de la FAQ décrit mieux l'intention que sa réponse,
         # qui contient souvent des mots génériques réutilisés ailleurs.
-        s = _score(question_tokens, faq.question)
+        exact_match = _normalize_question(faq.question) == normalized_question
+        s = 1.0 if exact_match else _score(question_tokens, faq.question)
         if s > 0:
-            scored_faqs.append((s, faq))
-    scored_faqs.sort(key=lambda t: t[0], reverse=True)
+            scored_faqs.append((s, faq, exact_match))
+    scored_faqs.sort(key=lambda t: (t[2], t[0]), reverse=True)
 
     expanded_question = _expand_tokens(question_tokens)
     category_terms = {
         'admission': {'inscription', 'admission', 'dossier', 'قبول', 'القبول', 'التحاق', 'الترشح', 'مستندات', 'وثائق', 'شهادة'},
         'specialites': {'spécialité', 'spécialités', 'filière', 'filières', 'formation', 'تخصص', 'تخصصات', 'شعبة', 'شعب'},
+        'contacts': {'contact', 'contacts', 'téléphone', 'telephone', 'email', 'mail', 'numéro', 'numero', 'chef', 'dirige', 'responsable', 'référent', 'مدير', 'رئيس', 'مسؤول', 'هاتف', 'رقم', 'تواصل', 'البريد'},
     }
     preferred_categories = {
         category for category, terms in category_terms.items()
         if expanded_question & terms
     }
+    if 'contacts' in preferred_categories:
+        preferred_categories.discard('specialites')
     if preferred_categories:
         preferred = [item for item in scored_faqs if item[1].categorie in preferred_categories]
         if preferred:
-            scored_faqs = preferred
+            exact_matches = [item for item in scored_faqs if item[2]]
+            scored_faqs = exact_matches or preferred
 
     # Les questions composées (ex. conditions + pièces) peuvent nécessiter
     # plusieurs FAQ validées. On conserve seulement les meilleurs résultats.
     admission_intent = expanded_question & {
         'inscription', 'admission', 'conditions', 'قبول', 'التحاق', 'الترشح', 'شهادة', 'شروط',
     }
-    document_intent = expanded_question & {'dossier', 'مستندات', 'وثائق', 'ملف'}
+    # Only combine admission and dossier FAQs when the user explicitly asks
+    # about documents; registration synonyms also expand to dossier terms.
+    document_intent = question_tokens & {'dossier', 'مستندات', 'وثائق', 'ملف'}
     faq_limit = 2 if admission_intent and document_intent else 1
     contenus_faq_vus = set()
-    for s, faq in scored_faqs[:faq_limit]:
+    for s, faq, _ in scored_faqs[:faq_limit]:
         minimum_score = 0.20 if preferred_categories else 0.30
         if s < minimum_score:
             continue

@@ -38,7 +38,7 @@ from docx.text.paragraph import Paragraph
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from knowledge.models import FAQ, Chunk, Document
+from knowledge.models import Contact, FAQ, Chunk, Document
 
 SEED_DIR = Path(__file__).resolve().parent.parent.parent / 'seed_documents'
 
@@ -47,6 +47,132 @@ DATE_VERSION = date(2026, 9, 1)  # "Version 1.0 — septembre 2026", indiquée d
 HEADING_NUM_RE = re.compile(r'^(\d+)\.\s*')
 QA_PREFIX_RE = re.compile(r'^(?:Q\s*:|س\s*:)\s*')
 SYMBOL_RE = re.compile(r'(✅|⚠️|🕐)')
+
+CONFIRMED_FAQ_REPLACEMENTS = {
+    'ar': {
+        'أين تقع المدرسة بالضبط': (
+            'تقع المدرسة على طريق البوادي قرب محطة «الركبة». إحداثيات الموقع: '
+            '18.160797, -15.951593. إذا كنت قادماً من جهة «وفقة الصكوك»، فالطريق '
+            'المعبّد المؤدي إلى المدرسة على يمينك، وإذا كنت قادماً من جهة طريق الجامعة '
+            'فهو على يسارك. [فتح موقع المدرسة على خرائط Google]'
+            '(https://www.google.com/maps?q=18.160797,-15.951593). '
+            '[الحصول على اتجاهات الوصول]'
+            '(https://www.google.com/maps/dir/?api=1&destination=18.160797%2C-15.951593).'
+        ),
+        'ما هي شروط القبول في المدرسة': (
+            'بحسب إعلان التسجيل لسنة 2026، يشترط أن يكون اسم المترشح ضمن اللائحة التي '
+            'اختارتها إدارة التكوين المهني عبر منصة «تكوين» وأرسلتها إلى المدرسة. '
+            'لا يحدد الإعلان المرفق شروط قبول أخرى.'
+        ),
+        'ما هي الشهادة المطلوبة للالتحاق': (
+            'للتسجيل لسنة 2026، أرفق نسخة من شهادة البكالوريا أو شهادة تقني أصلية أو '
+            'كشف الدرجات، بحسب الوثيقة المتوفرة لحالتك. إذا كنت من الناجحين خلال السنة '
+            'الحالية، فأرفق الوثيقة المناسبة لنتيجتك.'
+        ),
+        'ما هي وثائق ملف الترشح': (
+            'للتسجيل لسنة 2026، جهّز الملف التالي: 1) نسخة من شهادة البكالوريا '
+            'أو شهادة تقني أصلية أو كشف الدرجات، وللناجحين خلال السنة الحالية الوثيقة '
+            'المناسبة لحالتهم؛ 2) نسخة من بطاقة التعريف الوطنية للمترشح؛ 3) نسخة من '
+            'بطاقة التعريف الوطنية للوكيل، مع ظهور رقم هاتفه بوضوح؛ 4) أربع صور شمسية '
+            'حديثة؛ 5) تعبئة استمارة التسجيل الخاصة بالمدرسة وتوقيعها.'
+        ),
+        'متى تفتح التسجيلات': (
+            'إعلان التسجيل لسنة 2026 يحدد فترة استكمال التسجيل من الاثنين 28 سبتمبر '
+            '2026 إلى السبت 10 أكتوبر 2026، وذلك بالحضور إلى مقر المدرسة. وينبه الإعلان '
+            'إلى أن المقبول الذي لا يستكمل تسجيله خلال الفترة المحددة يعد متنازلاً عن مقعده. '
+            'هذه التواريخ خاصة بإعلان 2026.'
+        ),
+        'ما هو رقم هاتف المدرسة أو بريدها الإلكتروني': (
+            'للتواصل مع إدارة المدرسة، اتصل على 36187111 أو 46635996. '
+            'ولمراسلة المدير، استخدم البريد mvyahya@mfpam.gov.mr.'
+        ),
+    },
+    'fr': {
+        'où se trouve exactement l’école': (
+            'L’école se trouve sur la route des Badia, près de la station dite '
+            '« El-Rokba ». Coordonnées : 18.160797, -15.951593. En venant du côté de '
+            '« Wefga des Sukuk », la route goudronnée menant à l’école est à votre droite ; '
+            'en venant de la route de l’Université, elle est à votre gauche. '
+            '[Voir l’emplacement sur Google Maps]'
+            '(https://www.google.com/maps?q=18.160797,-15.951593). '
+            '[Obtenir l’itinéraire]'
+            '(https://www.google.com/maps/dir/?api=1&destination=18.160797%2C-15.951593).'
+        ),
+        'quelles sont les conditions d’admission': (
+            'Selon l’avis d’inscription 2026, le candidat doit figurer sur la liste '
+            'sélectionnée par la Direction de la Formation professionnelle via la '
+            'plateforme Tekwin et transmise à l’école. L’avis fourni ne précise pas '
+            'd’autres conditions d’admission.'
+        ),
+        'quel diplôme faut-il pour entrer': (
+            'Pour vous inscrire en 2026, joignez l’un des documents suivants selon votre '
+            'situation : une copie du baccalauréat, le diplôme original de technicien ou '
+            'un relevé de notes. Si vous avez réussi cette année, fournissez le document '
+            'correspondant à votre résultat.'
+        ),
+        'que contient le dossier de candidature': (
+            'Pour l’inscription 2026, préparez le dossier suivant : 1) une copie du '
+            'baccalauréat, ou le diplôme original de technicien, ou un relevé de notes ; '
+            'pour les admis de l’année en cours, le document correspondant à leur situation ; '
+            '2) une copie de la carte nationale d’identité du candidat ; 3) une copie de la '
+            'carte nationale d’identité du tuteur, avec son numéro de téléphone lisible ; '
+            '4) quatre photos d’identité récentes ; 5) le formulaire d’inscription de '
+            'l’école rempli et signé.'
+        ),
+        'quand ouvrent les inscriptions': (
+            'L’avis d’inscription 2026 fixe la période de finalisation des inscriptions '
+            'du lundi 28 septembre au samedi 10 octobre 2026, avec présence à l’école. '
+            'Il précise qu’un candidat admis qui ne finalise pas son inscription durant '
+            'cette période est considéré comme ayant renoncé à sa place. Ces dates '
+            'concernent l’avis 2026.'
+        ),
+        'quel est le téléphone ou l’e-mail de l’école': (
+            'Pour joindre l’administration de l’école, appelez le 36187111 ou le '
+            '46635996. Pour écrire au directeur, utilisez mvyahya@mfpam.gov.mr.'
+        ),
+    },
+}
+
+CONFIRMED_FAQ_ADDITIONS = {
+    'ar': [
+        {'question': 'أين أودع ملف التسجيل؟', 'reponse': 'يودع الملف لدى مصلحة الشؤون الطلابية بالمدرسة، وفق إعلان التسجيل لسنة 2026.', 'categorie': 'admission'},
+        {'question': 'كيف أتواصل مع إدارة المدرسة؟', 'reponse': 'يمكن التواصل مع إدارة المدرسة عبر الرقمين 36187111 أو 46635996.', 'categorie': 'contacts'},
+        {'question': 'ما أرقام هاتف الإدارة؟', 'reponse': 'رقما إدارة المدرسة هما 36187111 و46635996.', 'categorie': 'contacts'},
+    ],
+    'fr': [
+        {'question': 'Où déposer le dossier d’inscription ?', 'reponse': 'Le dossier se dépose auprès du service des affaires estudiantines de l’école, conformément à l’avis d’inscription 2026.', 'categorie': 'admission'},
+        {'question': 'Comment contacter l’administration de l’école ?', 'reponse': 'Vous pouvez joindre l’administration aux numéros 36187111 ou 46635996.', 'categorie': 'contacts'},
+        {'question': 'Quels sont les numéros de téléphone de l’administration ?', 'reponse': 'Les numéros de l’administration de l’école sont le 36187111 et le 46635996.', 'categorie': 'contacts'},
+    ],
+}
+
+from knowledge.staff_directory import creer_faq_contacts, synchroniser_contact_administration
+
+
+def enrichir_faq_confirmee(paires: list[dict], langue: str) -> list[dict]:
+    """Remplace les réponses provisoires et ajoute les contacts validés."""
+    paires_enrichies = [dict(paire) for paire in paires]
+    remplacements = CONFIRMED_FAQ_REPLACEMENTS.get(langue, {})
+    for paire in paires_enrichies:
+        question = paire['question'].strip().lower()
+        for fragment, reponse in remplacements.items():
+            if fragment in question:
+                paire['reponse'] = reponse
+                break
+    paires_enrichies.extend(
+        dict(paire) for paire in CONFIRMED_FAQ_ADDITIONS.get(langue, [])
+    )
+    paires_enrichies.extend(creer_faq_contacts(langue))
+    if langue == 'ar':
+        reponse_dossier = next(
+            paire['reponse'] for paire in paires_enrichies
+            if 'ما هي وثائق ملف الترشح' in paire['question']
+        )
+        paires_enrichies.extend([
+            {'question': 'ما مكونات ملف التسجيل؟', 'reponse': reponse_dossier, 'categorie': 'admission'},
+            {'question': 'ما مكونات الملف؟', 'reponse': reponse_dossier, 'categorie': 'admission'},
+        ])
+    return paires_enrichies
 
 
 def nettoyer_reponse_faq(reponse: str) -> str:
@@ -212,6 +338,7 @@ class Command(BaseCommand):
         )
         self._importer_faq('FAQ Bot (FR)', '06_FAQ_Bot_FR.docx', 'fr', FAQ_SECTION_CATEGORIE)
         self._importer_faq('FAQ Bot (AR)', '05_FAQ_Bot_AR.docx', 'ar', FAQ_SECTION_CATEGORIE)
+        synchroniser_contact_administration()
 
     def _importer_narratif(self, titre_doc, filename, langue, type_document, section_map):
         chemin = SEED_DIR / filename
@@ -262,7 +389,7 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR(f"Fichier introuvable : {chemin}"))
             return
 
-        paires = extraire_faq(chemin, section_map)
+        paires = enrichir_faq_confirmee(extraire_faq(chemin, section_map), langue)
 
         document, _ = Document.objects.update_or_create(
             titre=titre_doc,
